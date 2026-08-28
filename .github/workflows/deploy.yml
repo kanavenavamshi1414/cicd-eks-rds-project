@@ -13,16 +13,12 @@ jobs:
 
     steps:
 
-      # -------------------------
-      # Checkout Code
-      # -------------------------
+      # Checkout source code
       - name: Checkout code
         uses: actions/checkout@v4
 
 
-      # -------------------------
       # Login to Docker Hub
-      # -------------------------
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -30,27 +26,21 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 
-      # -------------------------
-      # Build Docker Image
-      # -------------------------
+      # Build Docker image
       - name: Build Docker image
         run: |
           docker build -t kanavenavamshi/sample-app2:${{ github.sha }} ./app
           docker tag kanavenavamshi/sample-app2:${{ github.sha }} kanavenavamshi/sample-app2:latest
 
 
-      # -------------------------
-      # Push Docker Image
-      # -------------------------
+      # Push Docker image
       - name: Push Docker image
         run: |
           docker push kanavenavamshi/sample-app2:${{ github.sha }}
           docker push kanavenavamshi/sample-app2:latest
 
 
-      # -------------------------
-      # Configure AWS Credentials
-      # -------------------------
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -59,63 +49,62 @@ jobs:
           aws-region: eu-north-1
 
 
-      # -------------------------
+      # Verify AWS credentials
+      - name: Verify AWS credentials
+        run: |
+          aws sts get-caller-identity
+
+
       # Setup Terraform
-      # -------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
 
-      # -------------------------
       # Terraform Init
-      # -------------------------
       - name: Terraform Init
         working-directory: ./terraform
-        run: terraform init
+        run: |
+          terraform init
 
 
-      # -------------------------
-      # Terraform Format
-      # -------------------------
+      # Terraform Format Check
       - name: Terraform Format
         working-directory: ./terraform
-        run: terraform fmt -check
+        run: |
+          terraform fmt -check
 
 
-      # -------------------------
       # Terraform Validate
-      # -------------------------
       - name: Terraform Validate
         working-directory: ./terraform
-        run: terraform validate
+        run: |
+          terraform validate
 
 
-      # -------------------------
       # Terraform Plan
-      # -------------------------
       - name: Terraform Plan
         working-directory: ./terraform
-        run: terraform plan -out=tfplan
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+        run: |
+          terraform plan -out=tfplan
 
 
-      # -------------------------
       # Terraform Apply
-      # -------------------------
       - name: Terraform Apply
         working-directory: ./terraform
-        run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+        run: |
+          terraform apply -auto-approve tfplan
 
 
-      # -------------------------
       # Setup kubectl
-      # -------------------------
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
 
-      # -------------------------
-      # Configure EKS
-      # -------------------------
+      # Configure EKS kubeconfig
       - name: Configure kubeconfig
         run: |
           aws eks update-kubeconfig \
@@ -123,43 +112,33 @@ jobs:
             --name cicd-eks-rds
 
 
-      # -------------------------
-      # Deploy Application
-      # -------------------------
+      # Deploy application to Kubernetes
       - name: Deploy application
         run: |
           kubectl apply -f k8s/deployment.yml
           kubectl apply -f k8s/service.yml
 
 
-      # -------------------------
-      # Update Image with Commit SHA
-      # -------------------------
+      # Update application image
       - name: Update deployment image
         run: |
           kubectl set image deployment/sample-app \
             sample-app=kanavenavamshi/sample-app2:${{ github.sha }}
 
 
-      # -------------------------
-      # Wait for Deployment
-      # -------------------------
+      # Wait for Kubernetes rollout
       - name: Wait for rollout
         run: |
           kubectl rollout status deployment/sample-app --timeout=300s
 
 
-      # -------------------------
-      # Check Pods
-      # -------------------------
+      # Check pods
       - name: Check Kubernetes Pods
         run: |
           kubectl get pods -o wide
 
 
-      # -------------------------
       # Check LoadBalancer
-      # -------------------------
       - name: Check Kubernetes Service
         run: |
           kubectl get svc
