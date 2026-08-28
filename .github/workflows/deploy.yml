@@ -12,8 +12,13 @@ on:
           - apply
           - destroy
 
+# Prevent multiple workflows from using the same Terraform state
+concurrency:
+  group: cicd-eks-rds-terraform
+  cancel-in-progress: false
+
 jobs:
-  build-infra-and-deploy:
+  infrastructure-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,15 +30,12 @@ jobs:
         uses: actions/checkout@v4
 
 
-      # =========================
-      # APPLY WORKFLOW
-      # =========================
-
       # -------------------------
       # Login to Docker Hub
+      # Only needed for APPLY
       # -------------------------
       - name: Login to Docker Hub
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         uses: docker/login-action@v3
         with:
           username: kanavenavamshi
@@ -44,7 +46,7 @@ jobs:
       # Build Docker Image
       # -------------------------
       - name: Build Docker image
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           docker build \
             -t kanavenavamshi/sample-app2:${{ github.sha }} \
@@ -59,7 +61,7 @@ jobs:
       # Push Docker Image
       # -------------------------
       - name: Push Docker image
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           docker push kanavenavamshi/sample-app2:${{ github.sha }}
           docker push kanavenavamshi/sample-app2:latest
@@ -77,7 +79,7 @@ jobs:
 
 
       # -------------------------
-      # Verify AWS Credentials
+      # Verify AWS
       # -------------------------
       - name: Verify AWS credentials
         run: |
@@ -118,51 +120,46 @@ jobs:
           terraform validate
 
 
-      # =========================
+      # =================================================
       # TERRAFORM APPLY
-      # =========================
-
-      # -------------------------
-      # Terraform Plan
-      # -------------------------
-      - name: Terraform Plan
-        if: inputs.action == 'apply'
+      # =================================================
+      - name: Terraform Apply
+        if: ${{ inputs.action == 'apply' }}
         working-directory: ./terraform
         env:
           TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
         run: |
           terraform plan -out=tfplan
 
-
-      # -------------------------
-      # Terraform Apply
-      # -------------------------
-      - name: Terraform Apply
-        if: inputs.action == 'apply'
-        working-directory: ./terraform
-        env:
-          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
-        run: |
-          terraform apply -auto-approve tfplan
+          terraform apply \
+            -auto-approve \
+            tfplan
 
 
-      # =========================
-      # EKS DEPLOYMENT
-      # =========================
-
-      # -------------------------
-      # Setup kubectl
-      # -------------------------
+      # =================================================
+      # SETUP KUBECTL
+      # =================================================
       - name: Setup kubectl
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         uses: azure/setup-kubectl@v4
 
 
       # -------------------------
-      # Configure EKS kubeconfig
+      # Wait for EKS Cluster
+      # -------------------------
+      - name: Wait for EKS cluster
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+          aws eks wait cluster-active \
+            --region eu-north-1 \
+            --name cicd-eks-rds
+
+
+      # -------------------------
+      # Configure Kubeconfig
       # -------------------------
       - name: Configure kubeconfig
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           aws eks update-kubeconfig \
             --region eu-north-1 \
@@ -173,16 +170,16 @@ jobs:
       # Verify Kubernetes Connection
       # -------------------------
       - name: Check Kubernetes connection
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           kubectl get nodes
 
 
       # -------------------------
-      # Create or Update Database Secret
+      # Create / Update DB Secret
       # -------------------------
       - name: Create database secret
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         env:
           DB_PASSWORD: ${{ secrets.TF_VAR_DB_PASSWORD }}
         run: |
@@ -196,17 +193,17 @@ jobs:
       # Deploy Application
       # -------------------------
       - name: Deploy application
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           kubectl apply -f k8s/deployment.yml
           kubectl apply -f k8s/service.yml
 
 
       # -------------------------
-      # Update Application Image
+      # Update Docker Image
       # -------------------------
       - name: Update deployment image
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           kubectl set image deployment/sample-app \
             sample-app=kanavenavamshi/sample-app2:${{ github.sha }}
@@ -216,41 +213,38 @@ jobs:
       # Wait for Rollout
       # -------------------------
       - name: Wait for rollout
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           kubectl rollout status deployment/sample-app \
             --timeout=300s
 
 
       # -------------------------
-      # Check Kubernetes Pods
+      # Check Pods
       # -------------------------
       - name: Check Kubernetes Pods
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           kubectl get pods -o wide
 
 
       # -------------------------
-      # Check Kubernetes Service
+      # Check Service
       # -------------------------
       - name: Check Kubernetes Service
-        if: inputs.action == 'apply'
+        if: ${{ inputs.action == 'apply' }}
         run: |
           kubectl get svc
 
 
-      # =========================
+      # =================================================
       # TERRAFORM DESTROY
-      # =========================
-
-      # -------------------------
-      # Terraform Destroy
-      # -------------------------
+      # =================================================
       - name: Terraform Destroy
-        if: inputs.action == 'destroy'
+        if: ${{ inputs.action == 'destroy' }}
         working-directory: ./terraform
         env:
           TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
         run: |
-          terraform destroy -auto-approve
+          terraform destroy \
+            -auto-approve
