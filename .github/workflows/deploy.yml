@@ -37,16 +37,10 @@ jobs:
       # Build Docker Image
       # -------------------------
 
-      - name: Build Docker image
+            - name: Build Docker image
         run: |
-          docker build \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }} \
-            ./app
-
-          docker tag \
-            ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:latest
-
+          docker build -t "${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }}" ./app
+          docker tag "${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }}" "${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:latest"
 
       # -------------------------
       # Push Docker Image
