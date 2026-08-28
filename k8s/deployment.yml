@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: sample-app
-          image: kanavenavamshi/sample-app:latest
+          image: kanavenavamshi/sample-app2:latest
           imagePullPolicy: Always
 
           ports:
