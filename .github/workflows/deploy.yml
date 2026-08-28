@@ -1,0 +1,127 @@
+name: CI-CD-EKS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  build-and-deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # -------------------------
+      # Checkout
+      # -------------------------
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+      # -------------------------
+      # Docker Login
+      # -------------------------
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+
+      # -------------------------
+      # Build Docker Image
+      # -------------------------
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }} \
+            ./app
+
+          docker tag \
+            ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:latest
+
+
+      # -------------------------
+      # Push Docker Image
+      # -------------------------
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:latest
+
+
+      # -------------------------
+      # Configure AWS
+      # -------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-north-1
+
+
+      # -------------------------
+      # Install kubectl
+      # -------------------------
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+
+      # -------------------------
+      # Configure EKS
+      # -------------------------
+
+      - name: Configure kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region eu-north-1 \
+            --name cicd-eks-rds
+
+
+      # -------------------------
+      # Deploy Kubernetes
+      # -------------------------
+
+      - name: Deploy application
+        run: |
+          kubectl apply -f k8s/deployment.yml
+          kubectl apply -f k8s/service.yml
+
+
+      # -------------------------
+      # Update Image
+      # -------------------------
+
+      - name: Update deployment image
+        run: |
+          kubectl set image deployment/sample-app \
+            sample-app=${{ secrets.DOCKERHUB_USERNAME }}/sample-app2:${{ github.sha }}
+
+
+      # -------------------------
+      # Wait for Deployment
+      # -------------------------
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/sample-app --timeout=180s
+
+
+      # -------------------------
+      # Show Kubernetes Resources
+      # -------------------------
+
+      - name: Check Kubernetes
+        run: |
+          kubectl get pods
+          kubectl get svc
