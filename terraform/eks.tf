@@ -46,18 +46,13 @@ resource "aws_eks_cluster" "main" {
   role_arn = aws_iam_role.eks_cluster_role.arn
 
   vpc_config {
-
-    # EKS control plane uses these subnets
     subnet_ids = concat(
       aws_subnet.public[*].id,
       aws_subnet.private[*].id
     )
 
-    # Allows access from inside the VPC
     endpoint_private_access = true
-
-    # Allows kubectl/GitHub Actions access
-    endpoint_public_access = true
+    endpoint_public_access  = true
   }
 
   depends_on = [
@@ -103,7 +98,7 @@ resource "aws_iam_role" "node_role" {
 # NODE GROUP IAM POLICIES
 # =========================
 
-# Allows EC2 instances to join the EKS cluster
+# Allows worker nodes to join EKS
 resource "aws_iam_role_policy_attachment" "node_worker_policy" {
   role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
@@ -117,7 +112,7 @@ resource "aws_iam_role_policy_attachment" "node_cni_policy" {
 }
 
 
-# Allows pulling container images
+# Allows pulling images from ECR
 resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
   role       = aws_iam_role.node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
@@ -134,13 +129,13 @@ resource "aws_eks_node_group" "main" {
 
   node_role_arn = aws_iam_role.node_role.arn
 
-  # Worker nodes will run in private subnets
+  # Run worker nodes in private subnets
   subnet_ids = aws_subnet.private[*].id
 
 
-  # -------------------------
-  # Scaling Configuration
-  # -------------------------
+  # =========================
+  # SCALING CONFIGURATION
+  # =========================
 
   scaling_config {
     desired_size = 2
@@ -149,30 +144,23 @@ resource "aws_eks_node_group" "main" {
   }
 
 
-  # -------------------------
-  # EC2 Instance Type
-  # -------------------------
+  # =========================
+  # INSTANCE CONFIGURATION
+  # =========================
 
   instance_types = [
     "t3.medium"
   ]
 
-
-  # -------------------------
-  # Node Configuration
-  # -------------------------
-
   disk_size = 20
 
-  ami_type = "AL2023_x86_64_STANDARD"
 
-
-  # -------------------------
-  # Ensure IAM policies exist
-  # before creating nodes
-  # -------------------------
+  # =========================
+  # DEPENDENCIES
+  # =========================
 
   depends_on = [
+    aws_eks_cluster.main,
     aws_iam_role_policy_attachment.node_worker_policy,
     aws_iam_role_policy_attachment.node_cni_policy,
     aws_iam_role_policy_attachment.node_ecr_policy
