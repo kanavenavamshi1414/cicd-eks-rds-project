@@ -1,4 +1,11 @@
 # ============================================================
+# CURRENT AWS ACCOUNT / IAM IDENTITY
+# ============================================================
+
+data "aws_caller_identity" "current" {}
+
+
+# ============================================================
 # EKS CLUSTER IAM ROLE
 # ============================================================
 
@@ -32,7 +39,8 @@ resource "aws_iam_role" "eks_cluster_role" {
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role       = aws_iam_role.eks_cluster_role.name
+  role = aws_iam_role.eks_cluster_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
@@ -42,9 +50,12 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 # ============================================================
 
 resource "aws_eks_cluster" "main" {
-  name     = var.project_name
+
+  name = var.project_name
+
   role_arn = aws_iam_role.eks_cluster_role.arn
-  version  = "1.33"
+
+  version = "1.33"
 
   # ----------------------------------------------------------
   # EKS AUTHENTICATION
@@ -55,10 +66,11 @@ resource "aws_eks_cluster" "main" {
   }
 
   # ----------------------------------------------------------
-  # VPC
+  # NETWORK CONFIGURATION
   # ----------------------------------------------------------
 
   vpc_config {
+
     subnet_ids = concat(
       aws_subnet.public[*].id,
       aws_subnet.private[*].id
@@ -83,10 +95,54 @@ resource "aws_eks_cluster" "main" {
 
 
 # ============================================================
+# EKS ACCESS ENTRY
+#
+# Gives the IAM identity running Terraform access to EKS.
+# This does NOT create a new IAM user.
+# ============================================================
+
+resource "aws_eks_access_entry" "terraform" {
+
+  cluster_name = aws_eks_cluster.main.name
+
+  principal_arn = data.aws_caller_identity.current.arn
+
+  type = "STANDARD"
+
+  depends_on = [
+    aws_eks_cluster.main
+  ]
+}
+
+
+# ============================================================
+# EKS CLUSTER ADMIN ACCESS
+# ============================================================
+
+resource "aws_eks_access_policy_association" "terraform_admin" {
+
+  cluster_name = aws_eks_cluster.main.name
+
+  principal_arn = data.aws_caller_identity.current.arn
+
+  policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [
+    aws_eks_access_entry.terraform
+  ]
+}
+
+
+# ============================================================
 # EKS NODE IAM ROLE
 # ============================================================
 
 resource "aws_iam_role" "eks_node_role" {
+
   name = "${var.project_name}-node-role"
 
   assume_role_policy = jsonencode({
@@ -116,7 +172,9 @@ resource "aws_iam_role" "eks_node_role" {
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
-  role       = aws_iam_role.eks_node_role.name
+
+  role = aws_iam_role.eks_node_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
@@ -126,7 +184,9 @@ resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
-  role       = aws_iam_role.eks_node_role.name
+
+  role = aws_iam_role.eks_node_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
@@ -136,7 +196,9 @@ resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
-  role       = aws_iam_role.eks_node_role.name
+
+  role = aws_iam_role.eks_node_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
 }
 
@@ -168,7 +230,7 @@ resource "aws_eks_node_group" "main" {
   subnet_ids = aws_subnet.private[*].id
 
   # ----------------------------------------------------------
-  # INSTANCE
+  # INSTANCE TYPE
   # ----------------------------------------------------------
 
   instance_types = [
@@ -188,7 +250,7 @@ resource "aws_eks_node_group" "main" {
   }
 
   # ----------------------------------------------------------
-  # UPDATE
+  # UPDATE CONFIGURATION
   # ----------------------------------------------------------
 
   update_config {
@@ -200,8 +262,13 @@ resource "aws_eks_node_group" "main" {
   # ----------------------------------------------------------
 
   depends_on = [
+
+    aws_eks_cluster.main,
+
     aws_iam_role_policy_attachment.eks_worker_node_policy,
+
     aws_iam_role_policy_attachment.eks_cni_policy,
+
     aws_iam_role_policy_attachment.eks_ecr_policy
   ]
 
