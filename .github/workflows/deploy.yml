@@ -12,239 +12,334 @@ on:
           - apply
           - destroy
 
-# Prevent multiple workflows from using the same Terraform state
+# Prevent multiple workflows from modifying the same Terraform state
 concurrency:
   group: cicd-eks-rds-terraform
   cancel-in-progress: false
 
+env:
+  AWS_REGION: eu-north-1
+  CLUSTER_NAME: cicd-eks-rds
+  DOCKER_IMAGE: kanavenavamshi/sample-app2
+
 jobs:
+
   infrastructure-and-deploy:
+
     runs-on: ubuntu-latest
 
     steps:
 
-      # -------------------------
-      # Checkout Code
-      # -------------------------
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout code
         uses: actions/checkout@v4
 
 
-      # -------------------------
-      # Login to Docker Hub
-      # Only needed for APPLY
-      # -------------------------
-      - name: Login to Docker Hub
-        if: ${{ inputs.action == 'apply' }}
-        uses: docker/login-action@v3
-        with:
-          username: kanavenavamshi
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # ============================================================
+      # AWS CREDENTIALS
+      # ============================================================
 
-
-      # -------------------------
-      # Build Docker Image
-      # -------------------------
-      - name: Build Docker image
-        if: ${{ inputs.action == 'apply' }}
-        run: |
-          docker build \
-            -t kanavenavamshi/sample-app2:${{ github.sha }} \
-            ./app
-
-          docker tag \
-            kanavenavamshi/sample-app2:${{ github.sha }} \
-            kanavenavamshi/sample-app2:latest
-
-
-      # -------------------------
-      # Push Docker Image
-      # -------------------------
-      - name: Push Docker image
-        if: ${{ inputs.action == 'apply' }}
-        run: |
-          docker push kanavenavamshi/sample-app2:${{ github.sha }}
-          docker push kanavenavamshi/sample-app2:latest
-
-
-      # -------------------------
-      # Configure AWS Credentials
-      # -------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-north-1
+          aws-region: ${{ env.AWS_REGION }}
 
 
-      # -------------------------
-      # Verify AWS
-      # -------------------------
+      # ============================================================
+      # VERIFY AWS
+      # ============================================================
+
       - name: Verify AWS credentials
         run: |
           aws sts get-caller-identity
 
+          echo "AWS Region:"
+          aws configure get region
 
-      # -------------------------
-      # Setup Terraform
-      # -------------------------
+
+      # ============================================================
+      # DOCKER LOGIN
+      # ============================================================
+
+      - name: Login to Docker Hub
+        if: ${{ inputs.action == 'apply' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+
+      # ============================================================
+      # BUILD DOCKER IMAGE
+      # ============================================================
+
+      - name: Build Docker image
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+
+          docker build \
+            -t ${{ env.DOCKER_IMAGE }}:${{ github.sha }} \
+            ./app
+
+          docker tag \
+            ${{ env.DOCKER_IMAGE }}:${{ github.sha }} \
+            ${{ env.DOCKER_IMAGE }}:latest
+
+
+      # ============================================================
+      # PUSH DOCKER IMAGE
+      # ============================================================
+
+      - name: Push Docker image
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+
+          docker push ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+
+          docker push ${{ env.DOCKER_IMAGE }}:latest
+
+
+      # ============================================================
+      # SETUP TERRAFORM
+      # ============================================================
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
 
-      # -------------------------
-      # Terraform Init
-      # -------------------------
+      # ============================================================
+      # TERRAFORM INIT
+      # ============================================================
+
       - name: Terraform Init
         working-directory: ./terraform
         run: |
-          terraform init
+
+          terraform init -reconfigure
 
 
-      # -------------------------
-      # Terraform Format
-      # -------------------------
+      # ============================================================
+      # TERRAFORM FORMAT
+      # ============================================================
+
       - name: Terraform Format
         working-directory: ./terraform
         run: |
+
           terraform fmt -check
 
 
-      # -------------------------
-      # Terraform Validate
-      # -------------------------
+      # ============================================================
+      # TERRAFORM VALIDATE
+      # ============================================================
+
       - name: Terraform Validate
         working-directory: ./terraform
         run: |
+
           terraform validate
 
 
-      # =================================================
+      # ============================================================
+      # TERRAFORM PLAN
+      # ============================================================
+
+      - name: Terraform Plan
+        if: ${{ inputs.action == 'apply' }}
+        working-directory: ./terraform
+        env:
+          TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+        run: |
+
+          terraform plan \
+            -out=tfplan
+
+
+      # ============================================================
       # TERRAFORM APPLY
-      # =================================================
+      # ============================================================
+
       - name: Terraform Apply
         if: ${{ inputs.action == 'apply' }}
         working-directory: ./terraform
         env:
           TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
         run: |
-          terraform plan -out=tfplan
 
           terraform apply \
             -auto-approve \
             tfplan
 
 
-      # =================================================
+      # ============================================================
+      # VERIFY VPC / NAT
+      # ============================================================
+
+      - name: Verify NAT Gateway
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+
+          echo "Checking NAT Gateway..."
+
+          aws ec2 describe-nat-gateways \
+            --region $AWS_REGION \
+            --filter "Name=state,Values=available" \
+            --query 'NatGateways[].{ID:NatGatewayId,State:State,Subnet:SubnetId,VPC:VpcId}' \
+            --output table
+
+
+      # ============================================================
+      # VERIFY EKS CLUSTER
+      # ============================================================
+
+      - name: Wait for EKS cluster
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+
+          aws eks wait cluster-active \
+            --region $AWS_REGION \
+            --name $CLUSTER_NAME
+
+
+      # ============================================================
+      # GET EKS NODEGROUP STATUS
+      # ============================================================
+
+      - name: Check EKS node group
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+
+          aws eks describe-nodegroup \
+            --cluster-name $CLUSTER_NAME \
+            --nodegroup-name ${CLUSTER_NAME}-nodes \
+            --region $AWS_REGION \
+            --query 'nodegroup.{Status:status,Issues:health.issues,ASG:resources.autoScalingGroups}' \
+            --output json
+
+
+      # ============================================================
       # SETUP KUBECTL
-      # =================================================
+      # ============================================================
+
       - name: Setup kubectl
         if: ${{ inputs.action == 'apply' }}
         uses: azure/setup-kubectl@v4
 
 
-      # -------------------------
-      # Wait for EKS Cluster
-      # -------------------------
-      - name: Wait for EKS cluster
-        if: ${{ inputs.action == 'apply' }}
-        run: |
-          aws eks wait cluster-active \
-            --region eu-north-1 \
-            --name cicd-eks-rds
+      # ============================================================
+      # CONFIGURE KUBECONFIG
+      # ============================================================
 
-
-      # -------------------------
-      # Configure Kubeconfig
-      # -------------------------
       - name: Configure kubeconfig
         if: ${{ inputs.action == 'apply' }}
         run: |
+
           aws eks update-kubeconfig \
-            --region eu-north-1 \
-            --name cicd-eks-rds
+            --region $AWS_REGION \
+            --name $CLUSTER_NAME
 
 
-      # -------------------------
-      # Verify Kubernetes Connection
-      # -------------------------
+      # ============================================================
+      # CHECK KUBERNETES CONNECTION
+      # ============================================================
+
       - name: Check Kubernetes connection
         if: ${{ inputs.action == 'apply' }}
         run: |
-          kubectl get nodes
+
+          kubectl get nodes -o wide
 
 
-      # -------------------------
-      # Create / Update DB Secret
-      # -------------------------
+      # ============================================================
+      # CREATE DATABASE SECRET
+      # ============================================================
+
       - name: Create database secret
         if: ${{ inputs.action == 'apply' }}
         env:
           DB_PASSWORD: ${{ secrets.TF_VAR_DB_PASSWORD }}
         run: |
+
           kubectl create secret generic db-secret \
             --from-literal=DB_PASSWORD="$DB_PASSWORD" \
             --dry-run=client \
             -o yaml | kubectl apply -f -
 
 
-      # -------------------------
-      # Deploy Application
-      # -------------------------
+      # ============================================================
+      # DEPLOY APPLICATION
+      # ============================================================
+
       - name: Deploy application
         if: ${{ inputs.action == 'apply' }}
         run: |
+
           kubectl apply -f k8s/deployment.yml
+
           kubectl apply -f k8s/service.yml
 
 
-      # -------------------------
-      # Update Docker Image
-      # -------------------------
+      # ============================================================
+      # UPDATE IMAGE
+      # ============================================================
+
       - name: Update deployment image
         if: ${{ inputs.action == 'apply' }}
         run: |
+
           kubectl set image deployment/sample-app \
-            sample-app=kanavenavamshi/sample-app2:${{ github.sha }}
+            sample-app=${{ env.DOCKER_IMAGE }}:${{ github.sha }}
 
 
-      # -------------------------
-      # Wait for Rollout
-      # -------------------------
+      # ============================================================
+      # WAIT FOR ROLLOUT
+      # ============================================================
+
       - name: Wait for rollout
         if: ${{ inputs.action == 'apply' }}
         run: |
+
           kubectl rollout status deployment/sample-app \
             --timeout=300s
 
 
-      # -------------------------
-      # Check Pods
-      # -------------------------
-      - name: Check Kubernetes Pods
+      # ============================================================
+      # CHECK PODS
+      # ============================================================
+
+      - name: Check Kubernetes pods
         if: ${{ inputs.action == 'apply' }}
         run: |
+
           kubectl get pods -o wide
 
 
-      # -------------------------
-      # Check Service
-      # -------------------------
-      - name: Check Kubernetes Service
+      # ============================================================
+      # CHECK SERVICES
+      # ============================================================
+
+      - name: Check Kubernetes service
         if: ${{ inputs.action == 'apply' }}
         run: |
+
           kubectl get svc
 
 
-      # =================================================
+      # ============================================================
       # TERRAFORM DESTROY
-      # =================================================
+      # ============================================================
+
       - name: Terraform Destroy
         if: ${{ inputs.action == 'destroy' }}
         working-directory: ./terraform
         env:
           TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
         run: |
+
           terraform destroy \
             -auto-approve
