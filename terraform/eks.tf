@@ -1,6 +1,39 @@
-# =========================
+# ============================================================
+# EKS CLUSTER
+# ============================================================
+
+resource "aws_eks_cluster" "main" {
+  name     = var.project_name
+  role_arn = aws_iam_role.eks_cluster_role.arn
+
+  # Allow both EKS Access Entries and aws-auth ConfigMap
+  access_config {
+    authentication_mode = "API_AND_CONFIG_MAP"
+  }
+
+  vpc_config {
+    subnet_ids = concat(
+      aws_subnet.private[*].id,
+      aws_subnet.public[*].id
+    )
+
+    endpoint_private_access = true
+    endpoint_public_access  = true
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
+
+  tags = {
+    Name = "${var.project_name}-cluster"
+  }
+}
+
+
+# ============================================================
 # EKS CLUSTER IAM ROLE
-# =========================
+# ============================================================
 
 resource "aws_iam_role" "eks_cluster_role" {
   name = "${var.project_name}-cluster-role"
@@ -27,9 +60,9 @@ resource "aws_iam_role" "eks_cluster_role" {
 }
 
 
-# =========================
-# EKS CLUSTER IAM POLICY
-# =========================
+# ============================================================
+# EKS CLUSTER POLICY
+# ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   role       = aws_iam_role.eks_cluster_role.name
@@ -37,39 +70,11 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 }
 
 
-# =========================
-# EKS CLUSTER
-# =========================
+# ============================================================
+# EKS NODE IAM ROLE
+# ============================================================
 
-resource "aws_eks_cluster" "main" {
-  name     = var.project_name
-  role_arn = aws_iam_role.eks_cluster_role.arn
-
-  vpc_config {
-    subnet_ids = concat(
-      aws_subnet.public[*].id,
-      aws_subnet.private[*].id
-    )
-
-    endpoint_private_access = true
-    endpoint_public_access  = true
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.eks_cluster_policy
-  ]
-
-  tags = {
-    Name = var.project_name
-  }
-}
-
-
-# =========================
-# EKS NODE GROUP IAM ROLE
-# =========================
-
-resource "aws_iam_role" "node_role" {
+resource "aws_iam_role" "eks_node_role" {
   name = "${var.project_name}-node-role"
 
   assume_role_policy = jsonencode({
@@ -94,48 +99,53 @@ resource "aws_iam_role" "node_role" {
 }
 
 
-# =========================
-# NODE GROUP IAM POLICIES
-# =========================
+# ============================================================
+# NODE ROLE - EKS WORKER NODE POLICY
+# ============================================================
 
-# Allows worker nodes to join EKS
-resource "aws_iam_role_policy_attachment" "node_worker_policy" {
-  role       = aws_iam_role.node_role.name
+resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
+  role       = aws_iam_role.eks_node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
 
-# Allows Amazon VPC CNI networking
-resource "aws_iam_role_policy_attachment" "node_cni_policy" {
-  role       = aws_iam_role.node_role.name
+# ============================================================
+# NODE ROLE - EKS CNI POLICY
+# ============================================================
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  role       = aws_iam_role.eks_node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
 
-# Allows pulling images from ECR
-resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
-  role       = aws_iam_role.node_role.name
+# ============================================================
+# NODE ROLE - ECR PULL
+# ============================================================
+
+resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
+  role       = aws_iam_role.eks_node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
 }
 
 
-# =========================
-# EKS MANAGED NODE GROUP
-# =========================
+# ============================================================
+# EKS NODE GROUP
+# ============================================================
 
 resource "aws_eks_node_group" "main" {
-  cluster_name    = aws_eks_cluster.main.name
+  cluster_name = aws_eks_cluster.main.name
+
   node_group_name = "${var.project_name}-nodes"
 
-  node_role_arn = aws_iam_role.node_role.arn
+  node_role_arn = aws_iam_role.eks_node_role.arn
 
-  # Run worker nodes in private subnets
+  # Private subnets
   subnet_ids = aws_subnet.private[*].id
 
+  capacity_type = "ON_DEMAND"
 
-  # =========================
-  # SCALING CONFIGURATION
-  # =========================
+  instance_types = ["t3.medium"]
 
   scaling_config {
     desired_size = 2
@@ -143,31 +153,17 @@ resource "aws_eks_node_group" "main" {
     max_size     = 3
   }
 
-
-  # =========================
-  # INSTANCE CONFIGURATION
-  # =========================
-
-  instance_types = [
-    "t3.medium"
-  ]
-
-  disk_size = 20
-
-
-  # =========================
-  # DEPENDENCIES
-  # =========================
+  update_config {
+    max_unavailable = 1
+  }
 
   depends_on = [
-    aws_eks_cluster.main,
-    aws_iam_role_policy_attachment.node_worker_policy,
-    aws_iam_role_policy_attachment.node_cni_policy,
-    aws_iam_role_policy_attachment.node_ecr_policy
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_ecr_policy
   ]
 
-
   tags = {
-    Name = "${var.project_name}-nodes"
+    Name = "${var.project_name}-node"
   }
 }
