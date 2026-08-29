@@ -1,42 +1,9 @@
-# ============================================================
-# EKS CLUSTER
-# ============================================================
-
-resource "aws_eks_cluster" "main" {
-  name     = var.project_name
-  role_arn = aws_iam_role.eks_cluster_role.arn
-
-  # Allow both EKS Access Entries and aws-auth ConfigMap
-  access_config {
-    authentication_mode = "API_AND_CONFIG_MAP"
-  }
-
-  vpc_config {
-    subnet_ids = concat(
-      aws_subnet.private[*].id,
-      aws_subnet.public[*].id
-    )
-
-    endpoint_private_access = true
-    endpoint_public_access  = true
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.eks_cluster_policy
-  ]
-
-  tags = {
-    Name = "${var.project_name}-cluster"
-  }
-}
-
-
-# ============================================================
+# =========================================
 # EKS CLUSTER IAM ROLE
-# ============================================================
+# =========================================
 
 resource "aws_iam_role" "eks_cluster_role" {
-  name = "${var.project_name}-cluster-role"
+  name = "${var.project_name}-eks-cluster-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -55,24 +22,54 @@ resource "aws_iam_role" "eks_cluster_role" {
   })
 
   tags = {
-    Name = "${var.project_name}-cluster-role"
+    Name = "${var.project_name}-eks-cluster-role"
   }
 }
 
-
-# ============================================================
-# EKS CLUSTER POLICY
-# ============================================================
-
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role       = aws_iam_role.eks_cluster_role.name
+  role = aws_iam_role.eks_cluster_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
 
-# ============================================================
+# =========================================
+# EKS CLUSTER
+# =========================================
+
+resource "aws_eks_cluster" "main" {
+  name     = var.project_name
+  role_arn = aws_iam_role.eks_cluster_role.arn
+
+  version = "1.33"
+
+  access_config {
+    authentication_mode = "API_AND_CONFIG_MAP"
+  }
+
+  vpc_config {
+    subnet_ids = concat(
+      aws_subnet.public[*].id,
+      aws_subnet.private[*].id
+    )
+
+    endpoint_private_access = true
+    endpoint_public_access  = true
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy
+  ]
+
+  tags = {
+    Name = var.project_name
+  }
+}
+
+
+# =========================================
 # EKS NODE IAM ROLE
-# ============================================================
+# =========================================
 
 resource "aws_iam_role" "eks_node_role" {
   name = "${var.project_name}-node-role"
@@ -99,39 +96,32 @@ resource "aws_iam_role" "eks_node_role" {
 }
 
 
-# ============================================================
-# NODE ROLE - EKS WORKER NODE POLICY
-# ============================================================
+# =========================================
+# NODE GROUP POLICIES
+# =========================================
 
 resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
-  role       = aws_iam_role.eks_node_role.name
+  role = aws_iam_role.eks_node_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
-
-# ============================================================
-# NODE ROLE - EKS CNI POLICY
-# ============================================================
-
 resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
-  role       = aws_iam_role.eks_node_role.name
+  role = aws_iam_role.eks_node_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
-
-# ============================================================
-# NODE ROLE - ECR PULL
-# ============================================================
-
 resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
-  role       = aws_iam_role.eks_node_role.name
+  role = aws_iam_role.eks_node_role.name
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
 }
 
 
-# ============================================================
+# =========================================
 # EKS NODE GROUP
-# ============================================================
+# =========================================
 
 resource "aws_eks_node_group" "main" {
   cluster_name = aws_eks_cluster.main.name
@@ -140,16 +130,15 @@ resource "aws_eks_node_group" "main" {
 
   node_role_arn = aws_iam_role.eks_node_role.arn
 
-  # Private subnets
   subnet_ids = aws_subnet.private[*].id
-
-  capacity_type = "ON_DEMAND"
 
   instance_types = ["t3.medium"]
 
+  capacity_type = "ON_DEMAND"
+
   scaling_config {
     desired_size = 2
-    min_size     = 2
+    min_size     = 1
     max_size     = 3
   }
 
