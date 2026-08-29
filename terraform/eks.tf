@@ -28,12 +28,11 @@ resource "aws_iam_role" "eks_cluster_role" {
 
 
 # ============================================================
-# EKS CLUSTER IAM POLICY
+# EKS CLUSTER POLICY
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role = aws_iam_role.eks_cluster_role.name
-
+  role       = aws_iam_role.eks_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
@@ -43,11 +42,9 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 # ============================================================
 
 resource "aws_eks_cluster" "main" {
-  name = var.project_name
-
+  name     = var.project_name
   role_arn = aws_iam_role.eks_cluster_role.arn
-
-  version = "1.33"
+  version  = "1.33"
 
   # ----------------------------------------------------------
   # EKS AUTHENTICATION
@@ -58,11 +55,10 @@ resource "aws_eks_cluster" "main" {
   }
 
   # ----------------------------------------------------------
-  # NETWORK CONFIGURATION
+  # VPC
   # ----------------------------------------------------------
 
   vpc_config {
-
     subnet_ids = concat(
       aws_subnet.public[*].id,
       aws_subnet.private[*].id
@@ -116,34 +112,31 @@ resource "aws_iam_role" "eks_node_role" {
 
 
 # ============================================================
-# NODE GROUP - WORKER NODE POLICY
+# EKS WORKER NODE POLICY
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
-  role = aws_iam_role.eks_node_role.name
-
+  role       = aws_iam_role.eks_node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
 
 # ============================================================
-# NODE GROUP - CNI POLICY
+# EKS CNI POLICY
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
-  role = aws_iam_role.eks_node_role.name
-
+  role       = aws_iam_role.eks_node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
 
 # ============================================================
-# NODE GROUP - ECR PULL POLICY
+# ECR PULL POLICY
 # ============================================================
 
 resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
-  role = aws_iam_role.eks_node_role.name
-
+  role       = aws_iam_role.eks_node_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
 }
 
@@ -163,7 +156,7 @@ resource "aws_eks_node_group" "main" {
   node_group_name = "${var.project_name}-nodes"
 
   # ----------------------------------------------------------
-  # IAM ROLE
+  # NODE IAM ROLE
   # ----------------------------------------------------------
 
   node_role_arn = aws_iam_role.eks_node_role.arn
@@ -175,7 +168,7 @@ resource "aws_eks_node_group" "main" {
   subnet_ids = aws_subnet.private[*].id
 
   # ----------------------------------------------------------
-  # INSTANCE TYPE
+  # INSTANCE
   # ----------------------------------------------------------
 
   instance_types = [
@@ -195,7 +188,7 @@ resource "aws_eks_node_group" "main" {
   }
 
   # ----------------------------------------------------------
-  # UPDATE CONFIGURATION
+  # UPDATE
   # ----------------------------------------------------------
 
   update_config {
@@ -207,12 +200,8 @@ resource "aws_eks_node_group" "main" {
   # ----------------------------------------------------------
 
   depends_on = [
-    aws_eks_cluster.main,
-
     aws_iam_role_policy_attachment.eks_worker_node_policy,
-
     aws_iam_role_policy_attachment.eks_cni_policy,
-
     aws_iam_role_policy_attachment.eks_ecr_policy
   ]
 
